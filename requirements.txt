@@ -1,0 +1,7 @@
+Django==2.2.3
+channels==2.2.0
+rom==0.42.6
+djangorestframework==3.10.1
+django-environ==0.4.5
+Pillow==6.1.0
+

@@ -28,7 +28,6 @@ INSTALLED_APPS = (
     "django.contrib.staticfiles",
     "django.contrib.sites",
     "django.contrib.admin",
-
     "rest_framework",
     "channels",
 )
@@ -64,9 +63,9 @@ CHANNEL_LAYERS = {
 # Database #
 ############
 DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': CONFIG.PATHS["DATABASE_PATH"],
+    "default": {
+        "ENGINE": "django.db.backends.sqlite3",
+        "NAME": CONFIG.PATHS["DATABASE_PATH"],
     }
 }
 
