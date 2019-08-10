@@ -19,7 +19,6 @@ REDIS_LOCATION = "redis://:{password}@{host}:{port}/{db}".format(
 ##########################
 # Application definition #
 ##########################
-
 INSTALLED_APPS = (
     "django.contrib.auth",
     "django.contrib.contenttypes",
@@ -112,8 +111,6 @@ ADMIN_URL = "admin/"
 ##################
 
 DEFAULT_FROM_EMAIL = ""
-
-SERVER_EMAIL = "Google BC 2.0 <error@ailove.ru>"
 
 MANAGERS = ADMINS = (("error", "error@ailove.ru"),)
 
