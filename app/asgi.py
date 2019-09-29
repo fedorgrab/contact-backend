@@ -1,8 +1,13 @@
 from channels.auth import AuthMiddlewareStack
 from channels.routing import ProtocolTypeRouter, URLRouter
+from django.urls import path
 
-import app.routing
+from contact.game.consumers import ContactGameWSConsumer
 
 application = ProtocolTypeRouter(
-    {"websocket": AuthMiddlewareStack(URLRouter(app.routing.websocket_urlpatterns))}
+    {
+        "websocket": AuthMiddlewareStack(
+            URLRouter([path("ws/contact-game", ContactGameWSConsumer)])
+        )
+    }
 )

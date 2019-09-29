@@ -173,5 +173,7 @@ REST_FRAMEWORK = {
     "DATE_INPUT_FORMATS": ("%d.%m.%Y", "iso-8601"),
     "DEFAULT_AUTHENTICATION_CLASSES": (
         "app.authentication.CsrfExemptSessionAuthentication",
+        "rest_framework.authentication.SessionAuthentication",
+        "rest_framework.authentication.BasicAuthentication",
     ),
 }

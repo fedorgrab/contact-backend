@@ -1,3 +1,3 @@
-# from winston.games.apps.crowd.routing import websocket_urlpatterns as crowd_urls
+from contact.game.routes import websocket_urlpatterns
 
-websocket_urlpatterns = []
+websocket_urlpatterns = [*websocket_urlpatterns]
