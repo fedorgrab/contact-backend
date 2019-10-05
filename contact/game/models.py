@@ -1,5 +1,6 @@
 import rom
-from rom import ClassProperty, columns, model
+from rom import ClassProperty, columns
+from rom.model import Model as RedisStorageModel
 
 
 class RoomQuery(rom.Query):
@@ -22,11 +23,17 @@ class Serializable:
         raise NotImplementedError
 
 
-class Room(Serializable, model.Model):
+class RoomMessages(Serializable, list):
+    def serialize(self):
+        return [i.serialize() for i in self]
+
+
+class Room(Serializable, RedisStorageModel):
     players = columns.OneToMany(ftable="Player")
     game_host = columns.OneToOne(ftable="Player", on_delete="cascade")
     game_is_started = columns.Boolean(default=False, index=True)
     contact = columns.OneToOne(ftable="Contact", on_delete="cascade")
+    messages = columns.OneToMany(ftable="Message")
     word = columns.Text(default="")
     number_of_opened_letters = columns.Integer(default=1)
 
@@ -45,7 +52,6 @@ class Room(Serializable, model.Model):
                 lambda key: key[0] not in values_to_be_ignored, self.to_dict().items()
             )
         )
-
         data.update(
             players=list(map(lambda player: player.username, self.players)),
             game_host=self.game_host.username if self.game_host else None,
@@ -54,27 +60,13 @@ class Room(Serializable, model.Model):
         return data
 
 
-# class Word(Serializable, model.Model):
-#     number_of_opened_letters = columns.Integer(default=1)
-#     text = columns.Text(default="")
-#
-#     # room = columns.OneToOne(ftable="Room", on_delete="cascade")
-#
-#     @property
-#     def opened_word(self):
-#         return self.text[:self.number_of_opened_letters]
-#
-#     def serialize(self):
-#         return {"opened_word": self.opened_word}
-
-
-class Contact(Serializable, model.Model):
+class Contact(Serializable, RedisStorageModel):
     participants = columns.OneToMany(ftable="Player")
     guess_word = columns.Text()
     message_id = columns.Integer(required=True)
 
 
-class Player(Serializable, model.Model):
+class Player(Serializable, RedisStorageModel):
     username = columns.Text(index=True, keygen=rom.FULL_TEXT, unique=True)
     room = columns.ManyToOne(ftable="Room", on_delete="cascade")
     messages = columns.OneToMany(ftable="Message")
@@ -82,12 +74,15 @@ class Player(Serializable, model.Model):
     contact = columns.ManyToOne(ftable="Contact", on_delete="no action")
 
 
-class Message(Serializable, model.Model):
+class Message(Serializable, RedisStorageModel):
     definition = columns.Text()
     word = columns.Text()
     sender = columns.ManyToOne(ftable="Player", on_delete="no action")
+    room = columns.ManyToOne(ftable="Room", on_delete="cascade")
+    is_canceled = columns.Boolean(default=False)
 
     def serialize(self):
         data = self.to_dict()
         data["sender"] = self.sender.id
+        data.pop("room")
         return data

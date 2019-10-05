@@ -1,7 +1,7 @@
 from asgiref.sync import async_to_sync
 
 from contact.game.constants import GameEvent
-from contact.game.models import Message, Player, Room
+from contact.game.models import Message, Player, Room, RoomMessages
 
 
 class GameManagerDelegate:
@@ -14,7 +14,7 @@ class GameManagerDelegate:
 
 class GameManager:
     """
-    One GameManager on a single connection: manager for player and socket consumer
+    GameManager is single for player and socket consumer
     """
 
     def __init__(self, user, delegate):
@@ -58,24 +58,41 @@ class GameManager:
         return Room.query.get_free()
 
     # Game management methods #
-    def receive_message(self, word: str, definition: str) -> Message:
+    def action_message(self, word: str, definition: str) -> Message:
         message = Message(
-            word=word.lower(), definition=definition.lower(), sender=self.player
+            word=word.lower(),
+            definition=definition.lower(),
+            sender=self.player,
+            room=self.room,
         )
         message.save()
 
         return message
 
-    def set_word(self, word: str) -> Room:
+    def action_word(self, word: str) -> Room:
+        """After setting word users get room state"""
         self.room.word = word.lower()
         self.room.save()
         return self.room
 
-    # Game actions handlers #
+    def action_cancel(self, id, word) -> RoomMessages:
+        """
+        :param id: Message storage id
+        :param word: Estimated word, which should be meant by message sender
+        """
+        message = Message.get(id)
+        if message.word == word.lower():
+            message.is_canceled = True
+            message.save()
+
+        return RoomMessages(self.room.messages)
+
+    # Game action handling #
     def __switch_action(self, event: GameEvent):
         return {
-            GameEvent.RECEIVE_MESSAGE: self.receive_message,
-            GameEvent.SET_WORD: self.set_word,
+            GameEvent.RECEIVE_MESSAGE: self.action_message,
+            GameEvent.SET_WORD: self.action_word,
+            GameEvent.CANCEL_CONTACT: self.action_cancel,
         }[event]
 
     def perform_game_action(self, event: GameEvent, data: dict):

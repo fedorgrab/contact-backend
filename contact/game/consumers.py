@@ -52,12 +52,12 @@ class ContactGameWSConsumer(GameManagerDelegate, AsyncWebsocketConsumer):
         await self.channel_layer.group_discard(self.room_id, self.channel_name)
         sync_to_async(self.game_manager.remove_user_from_game())
 
-    # Game Manager Interface implementation #
-    async def contact_closure(self, contact_data):
-        pass
-
     async def send_room_initial_information(self, start_game_data_info):
         if self.game_manager.game_is_started:
             await self.group_send(
                 {"data": start_game_data_info, "event": GameEvent.START.value}
             )
+
+    # Game Manager Interface implementation #
+    async def contact_closure(self, contact_data):
+        pass
