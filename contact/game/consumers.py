@@ -1,6 +1,6 @@
 import asyncio
 import time
-from typing import Callable, Dict, Optional, Any
+from typing import Any, Callable, Dict, Optional
 
 from channels.generic.websocket import AsyncJsonWebsocketConsumer
 

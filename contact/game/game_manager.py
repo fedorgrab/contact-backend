@@ -7,6 +7,7 @@ from contact.game import storage
 from contact.game.constants import (
     CONTACT_AWAITING_TIME,
     NUMBER_OF_PLAYERS_TO_START,
+    POINTS,
     GameEvent,
 )
 from contact.game.exceptions import GameActionError, GameRuleError
@@ -109,7 +110,9 @@ class GameManager:
         storage.append_message_to_room(message, self.room)
         return message
 
-    def action_comment_message(self, message_id: str, comment_text: str) -> storage.Message:
+    def action_comment_message(
+        self, message_id: str, comment_text: str
+    ) -> storage.Message:
         message = storage.Message.get_by_id(message_id)
         if message.is_canceled:
             raise GameRuleError("Canceled messages can not be commented")
@@ -150,6 +153,7 @@ class GameManager:
             message.is_canceled = True
             message.open_answer()
             message.save()
+            self.player.increase_points(by=POINTS.CONTACT_CANCEL)
 
         return message
 
@@ -171,8 +175,8 @@ class GameManager:
             message_id=message_id,
             estimated_word=estimated_word,
             initiator_id=message.sender_id,
+            participant=self.player,
         )
-        storage.append_contact_participant(contact, self.player.player_id)
 
         self.delegate.order_delayed_action(
             after=CONTACT_AWAITING_TIME, event=GameEvent.CONTACT_RESULT
@@ -191,11 +195,19 @@ class GameManager:
         )
         contact.successful = success
         contact.save()
-
         if len(self.room.hosted_word) - self.room.open_letters_number == 1 or (
             self.room.hosted_word == contact.estimated_word and success
         ):
             self.delegate.order_delayed_action(after=0, event=GameEvent.FINISH)
+
+        if success:
+            contact_initiator = storage.Player.get_by_id(contact.initiator_id)
+            contact_initiator.increase_points(POINTS.CONTACT_INITIATOR_SUCCESS)
+
+            for participant in (
+                storage.Player.get_by_id(p_id) for p_id in contact.participants
+            ):
+                participant.increase_points(by=POINTS.CONTACT_PARTICIPANT_SUCCESS)
 
         self.room.increment_open_letters_number()
         self.room.refresh()

@@ -7,7 +7,11 @@ class Player(storage_handler.StorageComplexObject):
     player_id = storage_handler.IdField()
     is_game_host = storage_handler.BooleanField(default=False)
     room_id = storage_handler.RelationKeyField()
+    points = storage_handler.IntegerField(default=0)
     storage_key_prefix = "player"
+
+    def increase_points(self, by):
+        self._increment_field(field_name="points", by=by)
 
 
 class Message(storage_handler.StorageComplexObject):
@@ -31,33 +35,40 @@ class Contact(storage_handler.StorageComplexObject):
     initiator_id = storage_handler.RelationKeyField()
     estimated_word = storage_handler.StringField()
     successful = storage_handler.BooleanField(null=True)
+    participants = storage_handler.ListField()
 
     storage_key_prefix = "contact:room"
-    participants_storage_key_prefix = "contact:room:participants"
+    # participants_storage_key_prefix = "contact:room:participants"
 
     @classmethod
     def create_contact(
-        cls, room_id: str, estimated_word: str, message_id: str, initiator_id: str
+        cls,
+        room_id: str,
+        estimated_word: str,
+        message_id: str,
+        initiator_id: str,
+        participant: Player,
     ) -> "Contact":
         return cls.create_object(
             contact_id=room_id,
             estimated_word=estimated_word,
             message_id=message_id,
             initiator_id=initiator_id,
+            participants=[participant.player_id],
         )
 
-    @property
-    def participants_storage_key(self):
-        return f"{self.participants_storage_key_prefix}:{self.contact_id}"
+    # @property
+    # def participants_storage_key(self):
+    #     return f"{self.participants_storage_key_prefix}:{self.contact_id}"
 
     def get_participants(self):
         return storage_handler.get_list(key=self.participants_storage_key)
 
 
-def append_contact_participant(contact, participant_id):
-    storage_handler.list_push(
-        list_key=contact.participants_storage_key, value=participant_id
-    )
+# def append_contact_participant(contact, participant_id):
+#     storage_handler.list_push(
+#         list_key=contact.participants_storage_key, value=participant_id
+#     )
 
 
 def open_word_callback(instance: "Room"):

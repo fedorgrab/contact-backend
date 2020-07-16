@@ -284,5 +284,6 @@ class StorageComplexObject(metaclass=StorageComplexObjectMeta):
         self.__update_common_data()
 
     def _increment_field(self, field_name, by=1):
-        self.data[field_name] += by
         redis.hincrby(name=self.storage_key, key=field_name, amount=by)
+        self.data[field_name] += by
+        self.__update_common_data()
