@@ -15,7 +15,6 @@ REDIS_LOCATION = "redis://:{password}@{host}:{port}/{db}".format(
     port=CONFIG.SETTINGS["REDIS_PORT"],
     db=CONFIG.SETTINGS["REDIS_DB"],
 )
-
 ##########################
 # Application definition #
 ##########################
@@ -61,10 +60,23 @@ CHANNEL_LAYERS = {
 ############
 # Database #
 ############
+
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.sqlite3",
         "NAME": CONFIG.PATHS["DATABASE_PATH"],
+    }
+}
+
+#########
+# Cache #
+#########
+
+CACHES = {
+    "default": {
+        "BACKEND": "django_redis.cache.RedisCache",
+        "LOCATION": REDIS_LOCATION,
+        "OPTIONS": {"CLIENT_CLASS": "django_redis.client.DefaultClient"},
     }
 }
 
@@ -93,6 +105,7 @@ STATIC_URL = "/static/"
 MEDIA_ROOT = CONFIG.PATHS["DATA_DIR"]
 
 STATICFILES_DIRS = (CONFIG.PATHS["APP_DIR"] + "/app/static/",)
+
 MEDIA_URL = "/data/"
 
 STATICFILES_FINDERS = (
@@ -105,16 +118,6 @@ FILE_UPLOAD_TEMP_DIR = CONFIG.PATHS["TMP_DIR"]
 SESSION_FILE_PATH = CONFIG.PATHS["TMP_DIR"]
 
 ADMIN_URL = "admin/"
-
-##################
-# Email settings #
-##################
-
-DEFAULT_FROM_EMAIL = ""
-
-MANAGERS = ADMINS = (("error", "error@ailove.ru"),)
-
-EMAIL_SUBJECT_PREFIX = ""
 
 ###############################################
 # Other settings (Templates, Locale, Context) #
@@ -177,3 +180,11 @@ REST_FRAMEWORK = {
         "rest_framework.authentication.BasicAuthentication",
     ),
 }
+
+##########
+# Celery #
+##########
+CELERY_BROKER_URL = REDIS_LOCATION
+CELERY_ACCEPT_CONTENT = ["application/json"]
+CELERY_TASK_SERIALIZER = "json"
+CELERY_RESULT_SERIALIZER = "json"

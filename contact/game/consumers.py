@@ -1,63 +1,113 @@
-import json
+import asyncio
+import time
+from typing import Callable, Dict, Optional, Any
 
-from asgiref.sync import sync_to_async
-from channels.generic.websocket import AsyncWebsocketConsumer
+from channels.generic.websocket import AsyncJsonWebsocketConsumer
 
 from contact.game.constants import GameEvent
+from contact.game.exceptions import GameException
 from contact.game.game_manager import GameManager, GameManagerDelegate
 
+JSON = Dict[str, Any]
 
-class ContactGameWSConsumer(GameManagerDelegate, AsyncWebsocketConsumer):
-    game_manager: GameManager = None
+
+class ContactGameWSConsumer(GameManagerDelegate, AsyncJsonWebsocketConsumer):
+    game_manager: GameManager
 
     @property
     def room_id(self):
-        return str(getattr(self, "_room_id"))
+        return getattr(self, "_room_id")
 
+    # Connection life cycle #
     async def connect(self):
         self.game_manager = GameManager(user=self.scope["user"], delegate=self)
         room = self.game_manager.append_user_to_game()
-        setattr(self, "_room_id", room.id)
+        setattr(self, "_room_id", room.room_id)
 
         await self.channel_layer.group_add(
             group=self.room_id, channel=self.channel_name
         )
         await self.accept()
 
-        await self.send_room_initial_information(start_game_data_info=room.serialize())
-
-    async def receive(self, text_data=None, bytes_data=None):
-        data_json = json.loads(text_data)
-        response_data = self.handle_game_action(event_data=data_json)
-        await self.group_send(response_data)
-
-    def handle_game_action(self, event_data):
-        game_object_data = event_data["data"]
-        event = GameEvent(event_data["event"])
-
-        response_game_data = self.game_manager.perform_game_action(
-            event, data=game_object_data
+        initial_message = self.compose_game_message(
+            data=self.game_manager.initial_information,
+            event=self.game_manager.initial_event,
         )
-        return {"data": response_game_data, "event": event.value}
-
-    async def group_send(self, data):
-        await self.channel_layer.group_send(
-            group=self.room_id, message={"type": "send_game_message", "data": data}
-        )
-
-    async def send_game_message(self, message):
-        await self.send(text_data=json.dumps(message["data"]))
+        await self.group_send(initial_message)
 
     async def disconnect(self, close_code):
-        await self.channel_layer.group_discard(self.room_id, self.channel_name)
-        sync_to_async(self.game_manager.remove_user_from_game())
+        print(close_code)
 
-    async def send_room_initial_information(self, start_game_data_info):
-        if self.game_manager.game_is_started:
-            await self.group_send(
-                {"data": start_game_data_info, "event": GameEvent.START.value}
+    # Communication #
+    # Send:
+    async def send_json_type(self, content: JSON, close=False):
+        await self.send_json(content["data"], close=close)
+
+    async def group_send(self, data: JSON):
+        await self.channel_layer.group_send(
+            group=self.room_id, message={"type": "send_json_type", "data": data}
+        )
+
+    async def group_send_delayed(
+        self, after: int, callback: Callable, callback_kwargs: Dict
+    ):
+        """
+        :param after: Time after which message should be sent
+        :param callback: Function returning data which should be sent
+        :param callback_kwargs: Callback keyword arguments
+        :return: none
+        """
+        print(f"Delayed message is executing. Will be done in {after} seconds")
+        now = time.time()
+
+        await asyncio.sleep(after)
+        response_data = await callback(**callback_kwargs)
+
+        after_t = time.time()
+        print(f"Delay is done. It consumed {after_t - now}")
+
+        if response_data:
+            await self.group_send(response_data)
+
+    # process:
+    @staticmethod
+    def compose_game_message(data: JSON, event: GameEvent) -> JSON:
+        return {"data": data, "event": event.value}
+
+    @staticmethod
+    def compose_error_message(data: JSON, event: GameEvent) -> JSON:
+        return {"error": True, "data": data, "event": event.value}
+
+    async def handle_game_action(
+        self, event: str, game_data: Optional[JSON] = None
+    ) -> Optional[Dict]:
+        if game_data is None:
+            game_data = {}
+        game_event = GameEvent(event)
+
+        try:
+            response_data = self.game_manager.perform_game_action(game_event, game_data)
+        except GameException as game_error:
+            await self.send_json(
+                content=self.compose_error_message(game_error.data, game_event)
             )
+        else:
+            return self.compose_game_message(data=response_data, event=game_event)
 
-    # Game Manager Interface implementation #
-    async def contact_closure(self, contact_data):
-        pass
+    # receive:
+    async def receive_json(self, content: JSON, **kwargs):
+        event, game_data = content["event"], content["data"]
+        response_data = await self.handle_game_action(event, game_data)
+
+        if response_data:
+            await self.group_send(response_data)
+
+    # Game Manager Delegate #
+    def order_delayed_action(self, after: int, event: GameEvent):
+        asyncio.create_task(
+            self.group_send_delayed(
+                after=after,
+                callback=self.handle_game_action,
+                callback_kwargs={"event": event},
+            )
+        )

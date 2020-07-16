@@ -1,4 +1,5 @@
 from django.contrib.auth import authenticate, login
+from rest_framework.exceptions import ValidationError
 from rest_framework.generics import GenericAPIView
 from rest_framework.response import Response
 
@@ -10,14 +11,17 @@ class SignInAPIView(GenericAPIView):
 
     @staticmethod
     def login(request, username, password):
-        user = authenticate(username=username, password=password)
+        user = authenticate(request=request, username=username, password=password)
+        if not user:
+            raise ValidationError({"message": "Invalid credendials"})
+
         login(request=request, user=user)
 
     def post(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         self.login(request=request, **serializer.validated_data)
-        return Response(serializer.validated_data)
+        return Response({"message": "success"})
 
 
 class SignUpAPIView(GenericAPIView):
@@ -28,4 +32,4 @@ class SignUpAPIView(GenericAPIView):
         serializer.is_valid(raise_exception=True)
         user = serializer.save()
         login(request=request, user=user)
-        return Response(data={})
+        return Response({"message": "success"})

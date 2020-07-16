@@ -1,5 +1,6 @@
 from django.contrib.auth import get_user_model
 from django.core.validators import RegexValidator
+from django.db import IntegrityError
 from django.utils.translation import gettext_lazy as _
 from rest_framework import serializers
 
@@ -28,4 +29,9 @@ class AuthSerializer(serializers.ModelSerializer):
         fields = ("username", "password")
 
     def create(self, validated_data):
-        return User.objects.create(**validated_data)
+        try:
+            return User.objects.create_user(**validated_data)
+        except IntegrityError:
+            raise serializers.ValidationError(
+                {"username": "Username is already in used"}
+            )
