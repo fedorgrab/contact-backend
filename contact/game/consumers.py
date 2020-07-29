@@ -22,18 +22,22 @@ class ContactGameWSConsumer(GameManagerDelegate, AsyncJsonWebsocketConsumer):
     async def connect(self):
         self.game_manager = GameManager(user=self.scope["user"], delegate=self)
         room = self.game_manager.append_user_to_game()
-        setattr(self, "_room_id", room.room_id)
+        setattr(self, "_room_id", room.id_key)
 
         await self.channel_layer.group_add(
             group=self.room_id, channel=self.channel_name
         )
         await self.accept()
 
-        initial_message = self.compose_game_message(
+        initial_content = self.compose_game_message(
             data=self.game_manager.initial_information,
             event=self.game_manager.initial_event,
         )
-        await self.group_send(initial_message)
+
+        if self.game_manager.restored:
+            await self.send_json(content=initial_content)
+        else:
+            await self.group_send(initial_content)
 
     async def disconnect(self, close_code):
         print(close_code)
@@ -103,11 +107,12 @@ class ContactGameWSConsumer(GameManagerDelegate, AsyncJsonWebsocketConsumer):
             await self.group_send(response_data)
 
     # Game Manager Delegate #
-    def order_delayed_action(self, after: int, event: GameEvent):
+    def order_delayed_action(self, after: int, event: GameEvent, action_kwargs=None):
+        action_kwargs = action_kwargs or {}
         asyncio.create_task(
             self.group_send_delayed(
                 after=after,
                 callback=self.handle_game_action,
-                callback_kwargs={"event": event},
+                callback_kwargs={"event": event, **action_kwargs},
             )
         )

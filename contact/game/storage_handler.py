@@ -45,8 +45,17 @@ def list_push(list_key, value):
     redis.rpush(list_key, value)
 
 
-def delete_value(key):
-    redis.delete(key)
+def delete(*keys):
+    redis.delete(*keys)
+
+
+def add_value_to_set(set_key, value):
+    redis.sadd(set_key, value)
+
+
+def is_in_set(set_key, value):
+    value = redis.sismember(name=set_key, value=value)
+    return bool(value)
 
 
 class StorageObjectField:
@@ -100,7 +109,7 @@ class ListField(StorageObjectField):
 
 class CalculatedStringField(StringField):
     """
-    The field should be calculated with a given logic by a callback
+    Calculate value with a given logic by a callback
     This field should be used when its value depends on the values of other fields
     """
 
@@ -169,12 +178,10 @@ class StorageComplexObject(metaclass=StorageComplexObjectMeta):
             self.data[calculated_field_name] = calculated_field_class.callback(self)
 
     def __update_common_data(self):
-        if len(self._hidden_values) == 0:
-            self.common_data = self.data
-        else:
-            self.common_data = {
-                k: v for k, v in self.data.items() if k not in self._hidden_values
-            }
+        self.common_data = {}
+        for attr, value in self.data.items():
+            if attr not in self._hidden_values and (value != "" and value is not None):
+                self.common_data[attr] = value
 
     def __update_fields(self):
         self.__update_calculated_fields()
@@ -194,9 +201,12 @@ class StorageComplexObject(metaclass=StorageComplexObjectMeta):
         storage_dict = {}
 
         for attr_name, field_type in self.__descriptors.items():
+            if field_type.null and self.data[attr_name] is None:
+                storage_dict[attr_name] = "none"
+                continue
             if isinstance(field_type, BooleanField):
-                if field_type.null and self.data[attr_name] is None:
-                    continue
+                #     if field_type.null and self.data[attr_name] is None:
+                #         continue
                 storage_dict[attr_name] = int(self.data[attr_name])
             elif isinstance(field_type, ListField):
                 storage_dict[attr_name] = json.dumps(self.data[attr_name])
@@ -212,6 +222,10 @@ class StorageComplexObject(metaclass=StorageComplexObjectMeta):
         for key, value in storage_data.items():
             attr_name = key.decode()
             field_type = cls.__descriptors[attr_name]
+
+            if field_type.null and value == "none":
+                obj_dict[attr_name] = None
+                continue
             if isinstance(field_type, BooleanField):
                 obj_dict[attr_name] = bool(int(value))
             elif isinstance(field_type, IntegerField):
@@ -275,7 +289,7 @@ class StorageComplexObject(metaclass=StorageComplexObjectMeta):
 
     def save(self):
         """
-        Save and commit changes you amended to python object to a storage
+        Save and commit changes amended to python object to a storage
         """
         redis_values = self.__serialize_values_for_storage()
         # Since redis 4.0.0 HMSET considered to be deprecated.

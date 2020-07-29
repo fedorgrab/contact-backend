@@ -2,6 +2,7 @@ from enum import Enum
 
 NUMBER_OF_PLAYERS_TO_START = 3
 CONTACT_AWAITING_TIME = 5
+GAME_TIME_LIMIT = 60 * 3  # 3 mins
 
 
 class POINTS:
@@ -16,9 +17,11 @@ class GameEvent(Enum):
     START = "start"
     CONTINUE = "continue"
     FINISH = "finish"
+    ROOM_STATE = "room_state"
+    PLAYER_STATE = "player_state"
     # Game Actions
-    MESSAGE_RECEIVE = "message"
-    MESSAGE_COMMENT = "message_comment"
+    OFFER = "offer"
+    OFFER_COMMENT = "offer_comment"
     SET_WORD = "word"
     CONTACT = "contact"
     CONTACT_RESULT = "contact_result"

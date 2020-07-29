@@ -1,4 +1,5 @@
 import random
+import weakref
 from typing import Any, Callable, Dict
 
 from django.contrib.auth import get_user_model
@@ -6,6 +7,7 @@ from django.contrib.auth import get_user_model
 from contact.game import storage
 from contact.game.constants import (
     CONTACT_AWAITING_TIME,
+    GAME_TIME_LIMIT,
     NUMBER_OF_PLAYERS_TO_START,
     POINTS,
     GameEvent,
@@ -24,18 +26,18 @@ class GameManagerDelegate:
     WSConsumer (a.k.a communicator or controller from MVC) and its duties, but
     due to the specificity of the game WSConsumer should somehow know about
     exclusive game actions in a separate order. Hence even though brain does
-    not wanna know about the communicator, it should signal about this specific
+    not wanna know about the communicator, it should signal about these specific
     actions. That's why this protocol implements the backwards connection to
     communicator (or in different words it helps to delegate the responsibility
     of brain to its delegate – communicator).
-    That could be needed when users should have receive messages not strictly
-    after the game event, but in a different time (e.g. delayed messages regarding
-    to event, or message in the middle of the event)
+    That could be needed when users should have receive offers not strictly
+    after the game event, but in a different time (e.g. delayed offers regarding
+    to event, or offer in the middle of the event)
     """
 
     game_manager: "GameManager"
 
-    def order_delayed_action(self, after, event):
+    def order_delayed_action(self, after, event, action_kwargs=None):
         raise NotImplementedError
 
 
@@ -47,18 +49,22 @@ class GameManager:
 
     room: storage.Room
     player: storage.Player
-    delegate: GameManagerDelegate
 
     def __init__(self, user: User, delegate: GameManagerDelegate):
-        self.delegate = delegate
+        self._delegate = weakref.ref(delegate)
         player, created = storage.Player.get_or_create(obj_id=user.username)
         self.player = player
         self.restored = not created
         super().__init__()
 
     @property
+    def delegate(self) -> GameManagerDelegate:
+        return self._delegate()
+
+    @property
     def initial_information(self) -> JSON:
         self.refresh()
+        self.room.get_offers()
         return self.room.common_data
 
     @property
@@ -67,7 +73,8 @@ class GameManager:
 
     @staticmethod
     def select_host(room: storage.Room) -> str:
-        host_id = random.choice(room.get_player_ids())
+        # host_id = random.choice(room.get_player_ids())
+        host_id = room.get_player_ids()[0]
         host = storage.Player.get_by_id(host_id)
         host.is_game_host = True
         host.save()
@@ -81,10 +88,13 @@ class GameManager:
             storage.append_player_to_room(self.player, room)
 
             if room.number_of_players == NUMBER_OF_PLAYERS_TO_START:
-                room.game_host = self.select_host(room)
+                room.game_host_key = self.select_host(room)
                 room.unfree()
                 room.is_full = True
                 room.save()
+                # self.delegate.order_delayed_action(
+                #     after=GAME_TIME_LIMIT, event=GameEvent.FINISH
+                # )
 
         self.room = room
         return room
@@ -94,6 +104,16 @@ class GameManager:
         self.player.refresh()
 
     # Game actions #
+    # def action_room_state(self) -> storage.Room:
+    #     """Just updates room state in the client"""
+    #     self.room.refresh()
+    #     self.room.get_offers()
+    #     return self.room
+
+    def action_player_state(self) -> storage.Player:
+        self.player.refresh()
+        return self.player
+
     def action_finish_game(self) -> storage.Room:
         # TODO: Work with that more. It isn't done
         self.refresh()
@@ -101,30 +121,7 @@ class GameManager:
         self.room.save()
         return self.room
 
-    def action_message(self, answer: str, definition: str) -> storage.Message:
-        message = storage.Message.create_object(
-            sender_id=self.player.player_id,
-            definition=definition,
-            answer_internal=answer,
-        )
-        storage.append_message_to_room(message, self.room)
-        return message
-
-    def action_comment_message(
-        self, message_id: str, comment_text: str
-    ) -> storage.Message:
-        message = storage.Message.get_by_id(message_id)
-        if message.is_canceled:
-            raise GameRuleError("Canceled messages can not be commented")
-
-        if message.sender_id != self.player.player_id:
-            raise GameRuleError("Only message sender is able to comment it")
-
-        message.hints.append(comment_text)
-        message.save()
-        return message
-
-    def action_word(self, word: str) -> storage.Room:
+    def action_word(self, word: str):
         """After setting word users get room state"""
         self.refresh()
 
@@ -134,98 +131,145 @@ class GameManager:
         self.room.hosted_word = word.lower()
         self.room.game_is_started = True
         self.room.save()
-        return self.room
 
-    def action_cancel(self, message_id: str, estimated_word: str) -> storage.Message:
-        """
-        :param message_id: Message storage id
-        :param estimated_word: Estimated word, which should be meant by message sender
-        """
-        message = storage.Message.get_by_id(message_id)
+    def action_offer(self, answer: str, definition: str):
+        if self.player.id_key == self.room.game_host_key:
+            raise GameRuleError("Game host is not able to offer guesses")
 
-        if not self.player.player_id == self.room.game_host:
+        relevant_offer = storage.check_answer_relevance(
+            answer=answer.lower(), room=self.room
+        )
+
+        if not relevant_offer:
+            raise GameActionError("This word was already guessed")
+
+        self.room.refresh()
+        offer = storage.Offer.create_object(
+            sender_id=self.player.id_key,
+            definition=definition.lower(),
+            answer_internal=answer.lower(),
+        )
+        storage.append_offer_to_room(offer, self.room)
+
+    def action_comment_offer(self, offer_id: str, comment_text: str):
+        offer = storage.Offer.get_by_id(offer_id)
+        if offer.is_canceled:
+            raise GameRuleError("Canceled offers can not be commented")
+
+        if offer.sender_id != self.player.id_key:
+            raise GameRuleError("Only offer sender is able to comment it")
+
+        offer.hints.append(comment_text)
+        offer.save()
+
+    def action_cancel(self, offer_id: str, estimated_word: str):
+        """
+        :param offer_id: Offer storage id
+        :param estimated_word: Estimated word, which should be meant by offer sender
+        """
+
+        offer = storage.Offer.get_by_id(offer_id)
+
+        if not self.player.id_key == self.room.game_host_key:
             raise GameRuleError("Only game host is able to cancel guesses")
 
-        if message.is_canceled:
-            raise GameRuleError("Messages can't be canceled multiple times")
+        if offer.is_canceled:
+            raise GameRuleError("Offers can't be canceled multiple times")
 
-        if message.answer_internal == estimated_word.lower():
-            message.is_canceled = True
-            message.open_answer()
-            message.save()
+        if offer.answer_internal == estimated_word.lower():
+            offer.is_canceled = True
+            offer.save()
             self.player.increase_points(by=POINTS.CONTACT_CANCEL)
 
-        return message
+    def action_accept_offer(self, offer_id: str, estimated_word: str):
+        self.room.refresh()
 
-    def action_contact(self, message_id: str, estimated_word: str) -> storage.Contact:
-        message = storage.Message.get_by_id(message_id)
+        if self.room.contact_in_process:
+            raise GameRuleError(
+                "It is forbidden to make multiple contacts simultaneously"
+            )
+
+        offer = storage.Offer.get_by_id(offer_id)
+        estimated_word = estimated_word.lower()
         estimated_word_cut = estimated_word[: self.room.open_letters_number]
 
-        if message.sender_id == self.player.player_id:
-            raise GameRuleError("Players can't guess their own messages")
+        if offer.sender_id == self.player.id_key:
+            raise GameRuleError("Players can't accept their own offers")
 
-        if message.is_canceled:
-            raise GameRuleError("It is forbidden to guess canceled messages")
+        if offer.is_canceled:
+            raise GameRuleError("It is forbidden to guess canceled offers")
 
         if estimated_word_cut.lower() != self.room.open_word:
             raise GameActionError("Estimated word does not fit open letters")
 
-        contact = storage.Contact.create_contact(
-            room_id=self.room.room_id,
-            message_id=message_id,
-            estimated_word=estimated_word,
-            initiator_id=message.sender_id,
-            participant=self.player,
-        )
+        offer.in_process = True
+        offer.participants.append(self.player.id_key)
+        offer.estimated_word = estimated_word
+        offer.save()
+
+        self.room.contact_in_process = True
+        self.room.contact_offer_key = offer.id_key
+        self.room.save()
 
         self.delegate.order_delayed_action(
             after=CONTACT_AWAITING_TIME, event=GameEvent.CONTACT_RESULT
         )
-        return contact
 
-    def action_contact_result(self) -> storage.Room:
+    def action_contact_result(self):
         """
-        Should be evoked in contact in a specific time after contact action
-        to provide the game host some time to cancel the contact
+        Should be evoked in a specific time after contact action
+        to provide the game host some time to cancel the offer
         """
-        contact = storage.Contact.get_by_id(self.room.room_id)
-        message = storage.Message.get_by_id(contact.message_id)
-        success = not message.is_canceled and (
-            contact.estimated_word == message.answer_internal
+        self.room.refresh()
+        processed_offer = storage.Offer.get_by_id(self.room.contact_offer_key)
+
+        success = not processed_offer.is_canceled and (
+            processed_offer.estimated_word == processed_offer.answer_internal
         )
-        contact.successful = success
-        contact.save()
+        processed_offer.is_contacted = success
+        processed_offer.save()
+
         if len(self.room.hosted_word) - self.room.open_letters_number == 1 or (
-            self.room.hosted_word == contact.estimated_word and success
+            self.room.hosted_word == processed_offer.estimated_word and success
         ):
-            self.delegate.order_delayed_action(after=0, event=GameEvent.FINISH)
+            self.delegate.order_delayed_action(after=0.5, event=GameEvent.FINISH)
+
+        if processed_offer.answer_internal == self.room.hosted_word:
+            self.delegate.order_delayed_action(after=0.5, event=GameEvent.FINISH)
 
         if success:
-            contact_initiator = storage.Player.get_by_id(contact.initiator_id)
-            contact_initiator.increase_points(POINTS.CONTACT_INITIATOR_SUCCESS)
+            self.room.increment_open_letters_number()
+            self.room.clear_offers()
+            storage.mark_offer_as_processed(offer=processed_offer, room=self.room)
+            pass
+            # TODO: Think of moving this logic out of the method to separate action
+            # TODO: to let the client understand when their points are updated
+            # contact_initiator = storage.Player.get_by_id(contact.initiator_id)
+            # contact_initiator.increase_points(POINTS.CONTACT_INITIATOR_SUCCESS)
+            #
+            # for participant in (
+            #     storage.Player.get_by_id(p_id) for p_id in processed_offer.participants
+            # ):
+            #     participant.increase_points(by=POINTS.CONTACT_PARTICIPANT_SUCCESS)
 
-            for participant in (
-                storage.Player.get_by_id(p_id) for p_id in contact.participants
-            ):
-                participant.increase_points(by=POINTS.CONTACT_PARTICIPANT_SUCCESS)
-
-        self.room.increment_open_letters_number()
-        self.room.refresh()
-        return self.room
+        self.room.contact_in_process = False
+        self.room.save()
 
     # Game action handling #
-    def __switch_action(self, event: GameEvent) -> Callable:
+    def switch_action(self, event: GameEvent) -> Callable:
         return {
+            GameEvent.FINISH: self.action_finish_game,
+            # GameEvent.ROOM_STATE: self.action_room_state,
+            GameEvent.PLAYER_STATE: self.action_player_state,
             GameEvent.SET_WORD: self.action_word,
-            GameEvent.CONTACT: self.action_contact,
-            GameEvent.MESSAGE_RECEIVE: self.action_message,
-            GameEvent.MESSAGE_COMMENT: self.action_comment_message,
+            GameEvent.OFFER: self.action_offer,
+            GameEvent.OFFER_COMMENT: self.action_comment_offer,
+            GameEvent.CONTACT: self.action_accept_offer,
             GameEvent.CANCEL_CONTACT: self.action_cancel,
             GameEvent.CONTACT_RESULT: self.action_contact_result,
-            GameEvent.FINISH: self.action_finish_game,
         }[event]
 
     def perform_game_action(self, event: GameEvent, data: JSON) -> JSON:
-        action = self.__switch_action(event)
-        game_entity = action(**data)
-        return game_entity.common_data
+        self.switch_action(event)(**data)
+        self.room.get_offers()
+        return self.room.common_data
