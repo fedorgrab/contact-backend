@@ -5,7 +5,7 @@ from typing import Any, Callable, Dict, Optional
 from channels.generic.websocket import AsyncJsonWebsocketConsumer
 
 from contact.game.constants import GameEvent
-from contact.game.exceptions import GameException
+from contact.game.exceptions import DontTellAnyOneOfThisAction, GameException
 from contact.game.game_manager import GameManager, GameManagerDelegate
 
 JSON = Dict[str, Any]
@@ -41,6 +41,7 @@ class ContactGameWSConsumer(GameManagerDelegate, AsyncJsonWebsocketConsumer):
 
     async def disconnect(self, close_code):
         print(close_code)
+        self.game_manager.disconnect_player()
 
     # Communication #
     # Send:
@@ -61,7 +62,7 @@ class ContactGameWSConsumer(GameManagerDelegate, AsyncJsonWebsocketConsumer):
         :param callback_kwargs: Callback keyword arguments
         :return: none
         """
-        print(f"Delayed message is executing. Will be done in {after} seconds")
+        print(f"Delayed task is executing. Will be done in {after} seconds")
         now = time.time()
 
         await asyncio.sleep(after)
@@ -92,9 +93,10 @@ class ContactGameWSConsumer(GameManagerDelegate, AsyncJsonWebsocketConsumer):
         try:
             response_data = self.game_manager.perform_game_action(game_event, game_data)
         except GameException as game_error:
-            await self.send_json(
-                content=self.compose_error_message(game_error.data, game_event)
-            )
+            error_message = self.compose_error_message(game_error.data, game_event)
+            await self.send_json(content=error_message)
+        except DontTellAnyOneOfThisAction:
+            return
         else:
             return self.compose_game_message(data=response_data, event=game_event)
 
@@ -113,6 +115,6 @@ class ContactGameWSConsumer(GameManagerDelegate, AsyncJsonWebsocketConsumer):
             self.group_send_delayed(
                 after=after,
                 callback=self.handle_game_action,
-                callback_kwargs={"event": event, **action_kwargs},
+                callback_kwargs={"event": event, "game_data": action_kwargs},
             )
         )

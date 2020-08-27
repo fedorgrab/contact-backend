@@ -37,8 +37,16 @@ def get_list_slice(key, start, end):
     return redis.lrange(name=key, start=start, end=end)
 
 
-def set_value(key, value):
-    redis.set(name=key, value=value)
+def set_value(key, value, expire=None):
+    redis.set(name=key, value=value, ex=expire)
+
+
+def get_value(key):
+    return decode_value(redis.get(key))
+
+
+def exist(key):
+    return redis.exists(key)
 
 
 def list_push(list_key, value):
@@ -282,7 +290,7 @@ class StorageComplexObject(metaclass=StorageComplexObjectMeta):
         """
         storage_values_raw = redis.hgetall(name=self.storage_key)
         storage_value_processed = self.__deserialize_values_from_storage(
-            storage_values_raw
+            storage_data=storage_values_raw
         )
         self.data = storage_value_processed
         self.__update_fields()

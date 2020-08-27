@@ -1,6 +1,6 @@
 import random
 import weakref
-from typing import Any, Callable, Dict
+from typing import Any, Callable, Dict, Optional
 
 from django.contrib.auth import get_user_model
 
@@ -9,10 +9,16 @@ from contact.game.constants import (
     CONTACT_AWAITING_TIME,
     GAME_TIME_LIMIT,
     NUMBER_OF_PLAYERS_TO_START,
+    PLAYER_DISCONNECTION_AWAITING_TIME,
     POINTS,
     GameEvent,
+    GameFinishReason,
 )
-from contact.game.exceptions import GameActionError, GameRuleError
+from contact.game.exceptions import (
+    DontTellAnyOneOfThisAction,
+    GameActionError,
+    GameRuleError,
+)
 
 User = get_user_model()
 JSON = Dict[str, Any]
@@ -25,14 +31,14 @@ class GameManagerDelegate:
     Generally GameManager (a.k.a brain or model from MVC) shouldn't know about
     WSConsumer (a.k.a communicator or controller from MVC) and its duties, but
     due to the specificity of the game WSConsumer should somehow know about
-    exclusive game actions in a separate order. Hence even though brain does
-    not wanna know about the communicator, it should signal about these specific
+    exclusive game actions in a separate order. Even though brain does
+    not want to know about the communicator, it should signal about these specific
     actions. That's why this protocol implements the backwards connection to
     communicator (or in different words it helps to delegate the responsibility
-    of brain to its delegate – communicator).
-    That could be needed when users should have receive offers not strictly
-    after the game event, but in a different time (e.g. delayed offers regarding
-    to event, or offer in the middle of the event)
+    of brain to communicator).
+    That is needed when users should have receive message not strictly
+    after the game event, but in a different time (e.g. delayed message regarding
+    to event, or message in the middle of the event)
     """
 
     game_manager: "GameManager"
@@ -53,6 +59,7 @@ class GameManager:
     def __init__(self, user: User, delegate: GameManagerDelegate):
         self._delegate = weakref.ref(delegate)
         player, created = storage.Player.get_or_create(obj_id=user.username)
+        # noinspection PyTypeChecker
         self.player = player
         self.restored = not created
         super().__init__()
@@ -82,6 +89,7 @@ class GameManager:
 
     def append_user_to_game(self) -> storage.Room:
         if self.restored:
+            storage.delete_player_from_disconnected(self.player)
             room = storage.Room.get_by_id(obj_id=self.player.room_id)
         else:
             room = storage.Room.get_free_room() or storage.Room.create_room()
@@ -92,39 +100,59 @@ class GameManager:
                 room.unfree()
                 room.is_full = True
                 room.save()
-                # self.delegate.order_delayed_action(
-                #     after=GAME_TIME_LIMIT, event=GameEvent.FINISH
-                # )
+                self.delegate.order_delayed_action(
+                    after=GAME_TIME_LIMIT,
+                    event=GameEvent.FINISH,
+                    action_kwargs={"reason": GameFinishReason.GAME_TIME_LIMIT_EXPIRED},
+                )
 
         self.room = room
         return room
+
+    def disconnect_player(self):
+        if self.room.is_full:
+            if not storage.room_is_cleaning(self.room) and storage.room_exist(
+                self.room
+            ):
+                self.delegate.order_delayed_action(
+                    after=PLAYER_DISCONNECTION_AWAITING_TIME,
+                    event=GameEvent.FINISH,
+                    action_kwargs={"reason": GameFinishReason.DISCONNECTION},
+                )
+            storage.set_player_disconnected(self.player)
 
     def refresh(self):
         self.room.refresh()
         self.player.refresh()
 
     # Game actions #
-    # def action_room_state(self) -> storage.Room:
-    #     """Just updates room state in the client"""
-    #     self.room.refresh()
-    #     self.room.get_offers()
-    #     return self.room
 
     def action_player_state(self) -> storage.Player:
         self.player.refresh()
         return self.player
 
-    def action_finish_game(self) -> storage.Room:
-        # TODO: Work with that more. It isn't done
+    def action_finish_game(self, reason):
         self.refresh()
         self.room.game_is_finished = True
+
+        if reason == GameFinishReason.DISCONNECTION:
+            player_still_disconnected = storage.check_for_disconnected_player(
+                player=self.player
+            )
+            if player_still_disconnected:
+                self.room.winner = "none"
+                self.room.game_is_finished = True
+                self.room.game_finish_reason = GameFinishReason.DISCONNECTION
+                storage.order_room_cleaning(self.room)
+            else:
+                # Could not think of anything better ¯\_(ツ)_/¯
+                raise DontTellAnyOneOfThisAction()
+
         self.room.save()
-        return self.room
 
     def action_word(self, word: str):
         """After setting word users get room state"""
-        self.refresh()
-
+        self.player.refresh()
         if not self.player.is_game_host:
             raise GameRuleError("Only game host is able to set a room word")
 
@@ -136,14 +164,18 @@ class GameManager:
         if self.player.id_key == self.room.game_host_key:
             raise GameRuleError("Game host is not able to offer guesses")
 
-        relevant_offer = storage.check_answer_relevance(
+        offer_is_relevant = storage.check_answer_relevance(
             answer=answer.lower(), room=self.room
         )
 
-        if not relevant_offer:
+        if not offer_is_relevant:
             raise GameActionError("This word was already guessed")
 
-        self.room.refresh()
+        answer_cut = answer[: self.room.open_letters_number]
+
+        if answer_cut.lower() != self.room.open_word:
+            raise GameActionError("Answer does not fit open letters")
+
         offer = storage.Offer.create_object(
             sender_id=self.player.id_key,
             definition=definition.lower(),
@@ -182,11 +214,9 @@ class GameManager:
             self.player.increase_points(by=POINTS.CONTACT_CANCEL)
 
     def action_accept_offer(self, offer_id: str, estimated_word: str):
-        self.room.refresh()
-
         if self.room.contact_in_process:
             raise GameRuleError(
-                "It is forbidden to make multiple contacts simultaneously"
+                "It is forbidden to accept multiple offers simultaneously"
             )
 
         offer = storage.Offer.get_by_id(offer_id)
@@ -220,7 +250,6 @@ class GameManager:
         Should be evoked in a specific time after contact action
         to provide the game host some time to cancel the offer
         """
-        self.room.refresh()
         processed_offer = storage.Offer.get_by_id(self.room.contact_offer_key)
 
         success = not processed_offer.is_canceled and (
@@ -241,7 +270,6 @@ class GameManager:
             self.room.increment_open_letters_number()
             self.room.clear_offers()
             storage.mark_offer_as_processed(offer=processed_offer, room=self.room)
-            pass
             # TODO: Think of moving this logic out of the method to separate action
             # TODO: to let the client understand when their points are updated
             # contact_initiator = storage.Player.get_by_id(contact.initiator_id)
@@ -259,7 +287,6 @@ class GameManager:
     def switch_action(self, event: GameEvent) -> Callable:
         return {
             GameEvent.FINISH: self.action_finish_game,
-            # GameEvent.ROOM_STATE: self.action_room_state,
             GameEvent.PLAYER_STATE: self.action_player_state,
             GameEvent.SET_WORD: self.action_word,
             GameEvent.OFFER: self.action_offer,
@@ -269,7 +296,8 @@ class GameManager:
             GameEvent.CONTACT_RESULT: self.action_contact_result,
         }[event]
 
-    def perform_game_action(self, event: GameEvent, data: JSON) -> JSON:
+    def perform_game_action(self, event: GameEvent, data: JSON) -> Optional[JSON]:
+        self.room.refresh()
         self.switch_action(event)(**data)
         self.room.get_offers()
         return self.room.common_data

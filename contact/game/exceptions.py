@@ -13,3 +13,7 @@ class GameRuleError(GameException):
 
 class GameActionError(GameException):
     error_type = "action"
+
+
+class DontTellAnyOneOfThisAction(Exception):
+    pass

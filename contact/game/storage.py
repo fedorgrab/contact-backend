@@ -1,6 +1,8 @@
+import asyncio
+import time
 from typing import List
 
-from contact.game import storage_handler
+from contact.game import constants, storage_handler
 
 
 class Player(storage_handler.StorageComplexObject):
@@ -60,6 +62,8 @@ class Room(storage_handler.StorageComplexObject):
     is_full = storage_handler.BooleanField(default=False)
     game_is_started = storage_handler.BooleanField(default=False)
     game_is_finished = storage_handler.BooleanField(default=False)
+    winner = storage_handler.StringField()
+    game_finish_reason = storage_handler.StringField()
 
     hosted_word = storage_handler.StringField(internal=True)
     open_word = storage_handler.CalculatedStringField(callback=open_word_callback)
@@ -85,7 +89,7 @@ class Room(storage_handler.StorageComplexObject):
         return f"{self.offers_storage_key_prefix}:{self.id_key}"
 
     @property
-    def processed_offers_list_key(self):
+    def processed_offers_set_key(self):
         return f"{self.processed_offers_key_prefix}:{self.id_key}"
 
     @classmethod
@@ -125,6 +129,9 @@ class Room(storage_handler.StorageComplexObject):
     def increment_number_of_players(self):
         self._increment_field(field_name="number_of_players")
 
+    def decrement_number_of_player(self):
+        self._increment_field(field_name="number_of_players", by=-1)
+
     def increment_open_letters_number(self):
         self._increment_field(field_name="open_letters_number")
 
@@ -145,11 +152,75 @@ def append_offer_to_room(offer: Offer, room: Room):
 
 def mark_offer_as_processed(offer: Offer, room: Room):
     storage_handler.add_value_to_set(
-        set_key=room.processed_offers_list_key, value=offer.answer_internal
+        set_key=room.processed_offers_set_key, value=offer.answer_internal
     )
 
 
 def check_answer_relevance(answer, room: Room) -> bool:
     return not storage_handler.is_in_set(
-        set_key=room.processed_offers_list_key, value=answer
+        set_key=room.processed_offers_set_key, value=answer
     )
+
+
+def set_player_disconnected(player):
+    storage_handler.set_value(
+        key=f"disconnection:{player.id_key}",
+        value=1,
+        expire=constants.PLAYER_DISCONNECTION_AWAITING_TIME + 5,
+    )
+
+
+def delete_player_from_disconnected(player):
+    storage_handler.delete(
+        constants.DISCONNECTION_KEY_FORMAT.format(player_id=player.id_key)
+    )
+
+
+def check_for_disconnected_player(player):
+    return bool(
+        storage_handler.get_value(
+            constants.DISCONNECTION_KEY_FORMAT.format(player_id=player.id_key)
+        )
+    )
+
+
+async def clean_room(room):
+    start_time = time.time()
+    print(f"Room cleaning will be processed in {constants.ROOM_CLEANING_DELAY}")
+    storage_handler.set_value(
+        key=constants.CLEANING_ROOM_KEY_FORMAT.format(room_id=room.id_key), value=1
+    )
+    await asyncio.sleep(constants.ROOM_CLEANING_DELAY)
+    offer_ids = (f"offer:{offer_id}" for offer_id in room.get_offer_ids())
+    player_ids = (f"player:{player_id}" for player_id in room.get_player_ids())
+    storage_handler.delete(
+        *offer_ids,
+        *player_ids,
+        room.storage_key,
+        room.offer_list_key,
+        room.players_list_key,
+        room.processed_offers_set_key,
+    )
+
+    print(storage_handler.get_value("free_room"))
+    if storage_handler.get_value("free_room") == room.id_key:
+        storage_handler.delete("free_room")
+
+    storage_handler.delete(
+        constants.CLEANING_ROOM_KEY_FORMAT.format(room_id=room.id_key)
+    )
+    print(f"Room cleaning done. Spent {time.time() - start_time}")
+
+
+def order_room_cleaning(room):
+    asyncio.create_task(clean_room(room))
+
+
+def room_is_cleaning(room):
+    return storage_handler.exist(
+        constants.CLEANING_ROOM_KEY_FORMAT.format(room_id=room.id_key)
+    )
+
+
+def room_exist(room):
+    return storage_handler.exist(room.storage_key)
