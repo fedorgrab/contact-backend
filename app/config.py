@@ -21,19 +21,19 @@ class EnvWithParser(environ.Env):
 env = EnvWithParser()
 
 APP_DIR = environ.Path(__file__) - 2
-DATA_DIR = APP_DIR.path("..", "..", "data")
-CONFIG_DIR = APP_DIR.path("..", "..", "conf")
+DATA_DIR = APP_DIR.path("..", "data")
+CONFIG_DIR = APP_DIR.path("..", "conf")
 env.read_env(str(APP_DIR.path(".env")))
 
 parser = ConfigParser()
 
 PATHS["APP_DIR"] = str(APP_DIR)
 PATHS["DATA_DIR"] = str(DATA_DIR)
-PATHS["LOG_DIR"] = str(APP_DIR.path("..", "..", "logs"))
+PATHS["LOG_DIR"] = str(APP_DIR.path("..", "logs"))
 PATHS["CONFIG_DIR"] = str(CONFIG_DIR)
-PATHS["TMP_DIR"] = str(APP_DIR.path("..", "..", "tmp"))
-PATHS["CACHE_DIR"] = str(APP_DIR.path("..", "..", "cache"))
-PATHS["DATABASE_PATH"] = str(APP_DIR.path("..", "..", "database.db"))
+PATHS["TMP_DIR"] = str(APP_DIR.path("..", "tmp"))
+PATHS["CACHE_DIR"] = str(APP_DIR.path("..", "cache"))
+PATHS["DATABASE_PATH"] = str(APP_DIR.path("..", "database.db"))
 match = re.match(
     r"/srv/www/[a-zA-Z0-9_\-]+/repo/(?P<branch>[\w\-]+)/", PATHS["APP_DIR"]
 )
