@@ -10,23 +10,24 @@ User = get_user_model()
 def validate_password(value):
     regex_validate = RegexValidator(
         regex=r"^(?=.*\d).{8,}",
-        message=_("Invalid password: it should have numeric symbols"),
+        message=_("Should have at least 8 symbols \nNumeric values are required"),
     )
     return regex_validate(value)
 
 
-class AuthSerializer(serializers.ModelSerializer):
-    username = serializers.CharField()
+class SignUpSerializer(serializers.ModelSerializer):
+    username = serializers.CharField(required=True)
     password = serializers.CharField(
         required=True,
         min_length=8,
         validators=[validate_password],
         style={"input_type": "password"},
     )
+    email = serializers.EmailField(write_only=True, required=True)
 
     class Meta:
         model = User
-        fields = ("username", "password")
+        fields = ("username", "password", "email")
 
     def create(self, validated_data):
         try:
@@ -35,3 +36,18 @@ class AuthSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError(
                 {"username": "Username is already in used"}
             )
+
+
+class SignInSerializer(serializers.Serializer):
+    username = serializers.CharField(required=True)
+    password = serializers.CharField(required=True, style={"input_type": "password"})
+
+
+class TokenAuthSerialized(serializers.Serializer):
+    token = serializers.CharField()
+
+
+class UserSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = User
+        fields = ("username",)
