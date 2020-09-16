@@ -57,7 +57,9 @@ def open_word_callback(instance: "Room"):
 class Room(storage_handler.StorageComplexObject):
     id_key = storage_handler.IdField()
 
-    number_of_players = storage_handler.IntegerField(default=0)
+    number_of_players = storage_handler.IntegerField(
+        default=0, is_increment=True, is_decrement=True
+    )
     game_host_key = storage_handler.StringField()
     is_full = storage_handler.BooleanField(default=False)
     game_is_started = storage_handler.BooleanField(default=False)
@@ -67,7 +69,9 @@ class Room(storage_handler.StorageComplexObject):
 
     hosted_word = storage_handler.StringField(internal=True)
     open_word = storage_handler.CalculatedStringField(callback=open_word_callback)
-    open_letters_number = storage_handler.IntegerField(default=1, internal=True)
+    open_letters_number = storage_handler.IntegerField(
+        default=1, internal=True, is_increment=True
+    )
 
     contact_in_process = storage_handler.BooleanField(default=False)
     contact_offer_key = storage_handler.StringField(internal=True)
@@ -78,7 +82,7 @@ class Room(storage_handler.StorageComplexObject):
     offers_storage_key_prefix = "offers:room"
     processed_offers_key_prefix = "offers:processed:room"
 
-    # TODO: Maybe I should use ListField instead of storage lists
+    # TODO: Maybe – PROBABLY – I should use ListField instead of storage lists
 
     @property
     def players_list_key(self):
@@ -125,15 +129,6 @@ class Room(storage_handler.StorageComplexObject):
 
     def clear_offers(self):
         storage_handler.delete(*self.get_offer_ids(), self.offer_list_key)
-
-    def increment_number_of_players(self):
-        self._increment_field(field_name="number_of_players")
-
-    def decrement_number_of_player(self):
-        self._increment_field(field_name="number_of_players", by=-1)
-
-    def increment_open_letters_number(self):
-        self._increment_field(field_name="open_letters_number")
 
     def unfree(self):
         storage_handler.delete(self.free_room_storage_key)

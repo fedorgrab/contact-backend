@@ -92,7 +92,20 @@ class StringField(StorageObjectField):
 
 
 class IntegerField(StorageObjectField):
-    pass
+    """
+    :attribute is_increment: defines whether the integer field can  be incremented.
+        When value is True the owner class gets a class method
+        with name `increment_<descriptor_name>`
+
+    :attribute is_decrement: defines whether the integer field can  be decremented.
+        When value is True the owner class gets a class method
+        with name `decrement_<descriptor_name>`
+    """
+
+    def __init__(self, is_increment=False, is_decrement=False, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.is_increment = is_increment
+        self.is_decrement = is_decrement
 
 
 class IdField(StringField):
@@ -119,6 +132,10 @@ class CalculatedStringField(StringField):
     """
     Calculate value with a given logic by a callback
     This field should be used when its value depends on the values of other fields
+
+    :attribute callback[instance]: The callback which is used to change value before it is
+    received from the storage with the parameter below:
+        :param instance: A StorageComplexObject child class instance (e.g. storage Model)
     """
 
     def __init__(self, callback: Callable, *args, **kwargs):
@@ -152,6 +169,23 @@ class StorageComplexObjectMeta(type):
                 new_class.id_field_name = attr_name
             elif isinstance(attr, CalculatedStringField):
                 new_class._calculated_fields.append(attr_name)
+            elif isinstance(attr, IntegerField):
+                if attr.is_increment:
+                    setattr(
+                        new_class,
+                        f"increment_{attr_name}",
+                        functools.partialmethod(
+                            new_class._increment_field, field_name=attr_name
+                        ),
+                    )
+                if attr.is_decrement:
+                    setattr(
+                        new_class,
+                        f"decrement_{attr_name}",
+                        functools.partialmethod(
+                            new_class._increment_field, field_name=attr_name, by=-1
+                        ),
+                    )
 
             if attr.internal:
                 new_class._hidden_values.append(attr_name)
